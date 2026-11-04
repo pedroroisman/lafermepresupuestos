@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    { "source": "/", "destination": "/presupuesto/", "permanent": false }
+  ],
+  "rewrites": [
+    { "source": "/estudio", "destination": "/index.html" }
+  ]
+}
