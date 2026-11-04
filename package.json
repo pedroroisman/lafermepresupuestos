@@ -1,0 +1,8 @@
+{
+  "name": "la-ferme-estudio",
+  "private": true,
+  "description": "Estudio de historias de La Ferme",
+  "dependencies": {
+    "@vercel/functions": "^3.9.11"
+  }
+}
