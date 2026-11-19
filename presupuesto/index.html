@@ -322,9 +322,9 @@ function calc(){
   const lines = B.items.map(it => ({ it, total:lineNet(it) }));
   const subtotal = lines.reduce((a, l) => a + l.total, 0);
   const fab = lines.filter(l => norm(l.it.status) === 'a fabricar').reduce((a, l) => a + l.total, 0);
-  const dBase = B.discountBase === 'todo' ? subtotal : fab;
+  const dBase = subtotal;   // los descuentos se calculan siempre sobre el total
   const discounts = B.discounts.filter(d => d.on && +d.pct > 0 && dBase > 0).map(d => ({ ...d, amount:dBase * d.pct / 100, total:subtotal - dBase * d.pct / 100 }));
-  const depBase = B.deposit.base === 'todo' ? subtotal : fab;
+  const depBase = subtotal; // la seña en % se calcula siempre sobre el total
   const deposit = !B.deposit.on ? 0 : B.deposit.mode === 'fixed' ? (+B.deposit.amount || 0) : (depBase > 0 ? depBase * B.deposit.pct / 100 : 0);
   return { lines, subtotal, fab, dBase, discounts, deposit, depBase };
 }
@@ -439,8 +439,8 @@ async function buildPDF(){
 
   // ---------- Totales ----------
   const trows = [[K.discounts.length ? 'Subtotal' : 'Total', money(K.subtotal)]];
-  K.discounts.forEach(d => trows.push([`${d.label} (${d.pct}%${B.discountBase === 'todo' ? '' : ' a fabricar'})`, money(d.total)]));
-  if (K.deposit) trows.push([B.deposit.mode === 'fixed' ? 'Seña' : `Seña ${B.deposit.pct}%${B.deposit.base === 'todo' ? '' : ' (a fabricar)'}`, money(K.deposit)]);
+  K.discounts.forEach(d => trows.push([`${d.label} (${d.pct}%)`, money(d.total)]));
+  if (K.deposit) trows.push([B.deposit.mode === 'fixed' ? 'Seña' : `Seña ${B.deposit.pct}%`, money(K.deposit)]);
   doc.autoTable({
     startY:doc.lastAutoTable.finalY + 3, margin:{ left:W - M - 104, right:M, top:22, bottom:20 }, body:trows, theme:'plain', rowPageBreak:'avoid',
     styles:{ font:SANS, fontSize:9, textColor:C.ink, cellPadding:{ top:1.5, bottom:1.5, left:2, right:2 } },
@@ -611,30 +611,26 @@ function updateLive(){
 function secTotals(){
   const K = calc();
   return `<div class="sec totals"><h3><span class="step">3</span>Totales y seña</h3>
-    <p class="help" style="margin-bottom:8px">Precios con descuento que se muestran debajo del subtotal:</p>
+    <p class="help" style="margin-bottom:10px">Precios con descuento sobre el total, que se muestran debajo del subtotal:</p>
     ${B.discounts.map((d, i) => `<div class="trow">
       <input type="checkbox" data-path="discounts.${i}.on" ${d.on ? 'checked' : ''}>
       <input class="in" data-path="discounts.${i}.label" value="${esc(d.label)}">
       <div class="inline" style="flex-wrap:nowrap;gap:4px"><input class="in" type="number" step="any" min="0" max="100" data-path="discounts.${i}.pct" data-num value="${esc(d.pct)}" style="width:58px">%</div>
       <button class="tbtn danger" data-act="disc-del" data-i="${i}">Quitar</button></div>`).join('')}
-    <div class="inline" style="justify-content:space-between;margin:4px 0 12px"><button class="btn ghost sm" data-act="disc-add">+ Descuento</button>
-      <label class="tog" style="font-size:12px">Sobre <select class="in" data-path="discountBase" style="width:auto;padding:4px 6px">
-        <option value="fabricar" ${B.discountBase !== 'todo' ? 'selected' : ''}>productos a fabricar</option><option value="todo" ${B.discountBase === 'todo' ? 'selected' : ''}>todos los productos</option></select></label></div>
+    <div class="inline" style="margin:4px 0 18px"><button class="btn ghost sm" data-act="disc-add">+ Descuento</button></div>
     <div class="inline" style="justify-content:space-between;margin-bottom:8px">
       <label class="tog"><input type="checkbox" data-path="deposit.on" data-rerender ${B.deposit.on ? 'checked' : ''}> Seña</label>
       ${B.deposit.on ? `<select class="in" data-path="deposit.mode" style="width:auto;padding:4px 6px">
         <option value="pct" ${B.deposit.mode !== 'fixed' ? 'selected' : ''}>Porcentaje</option><option value="fixed" ${B.deposit.mode === 'fixed' ? 'selected' : ''}>Monto fijo</option></select>` : ''}</div>
     ${!B.deposit.on ? '' : B.deposit.mode === 'fixed'
       ? `<div class="f"><label>Monto de la seña</label><input type="text" data-path="deposit.amount" data-money value="${+B.deposit.amount ? esc(money(B.deposit.amount).replace('$ ', '')) : ''}" placeholder="ej. 1.000.000"></div>`
-      : `<div class="inline" style="justify-content:space-between"><div class="inline" style="flex-wrap:nowrap;gap:4px"><input class="in" type="number" step="any" min="0" max="100" data-path="deposit.pct" data-num value="${esc(B.deposit.pct)}" style="width:64px">%</div>
-        <label class="tog" style="font-size:12px">sobre <select class="in" data-path="deposit.base" style="width:auto;padding:4px 6px">
-        <option value="fabricar" ${B.deposit.base !== 'todo' ? 'selected' : ''}>productos a fabricar</option><option value="todo" ${B.deposit.base === 'todo' ? 'selected' : ''}>todos los productos</option></select></label></div>`}
+      : `<div class="inline" style="gap:8px"><input class="in" type="number" step="any" min="0" max="100" data-path="deposit.pct" data-num value="${esc(B.deposit.pct)}" style="width:84px"><span>% del total</span></div>`}
     <div class="summary" id="sumTotals">${sumTotalsHTML(K)}</div></div>`;
 }
-function sumItemsHTML(K){ return `<b>Subtotal:</b> ${money(K.subtotal)}${K.fab && K.fab !== K.subtotal ? ` · <b>A fabricar:</b> ${money(K.fab)}` : ''}`; }
+function sumItemsHTML(K){ return `<b>Subtotal:</b> ${money(K.subtotal)}`; }
 function sumTotalsHTML(K){
   return `${K.discounts.map(d => `${esc(d.label)}: <b>${money(d.total)}</b>`).join('<br>') || 'Sin precios con descuento.'}${K.deposit ? `<br>Seña: <b>${money(K.deposit)}</b>` : ''}
-      ${!K.fab && (B.discountBase !== 'todo' || B.deposit.base !== 'todo') && B.items.length ? '<br><span style="color:var(--muted)">Ningún producto está marcado “A fabricar”, por eso no se calculan descuentos ni seña.</span>' : ''}`;
+`;
 }
 function secConditions(){
   return `<div class="sec"><h3><span class="step">4</span>Forma de pago y aclaraciones</h3>
