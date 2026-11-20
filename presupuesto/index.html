@@ -193,6 +193,7 @@ const DEFAULT_CONDITIONS = () => [
 ];
 const DEFAULT_SETTINGS = () => ({
   tagline:'Muebles, diseño y decoración',
+  nextNum:1700,
   web:'laferme.com.ar',
   branches:[
     { name:'San Isidro', address:'Blanco Encalada 2665 - La Horqueta', email:'sanisidro@laferme.com.ar', phone:'' },
@@ -206,7 +207,7 @@ const DEFAULT_SETTINGS = () => ({
 const today = () => { const d = new Date(); return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`; };
 function newBudget(){
   const st = APP.settings;
-  return { num:'', date:today(), client:'', ref:'', branch:0, items:[], notes:'', photos:true,
+  return { num:String(APP.settings.nextNum || 1700), date:today(), client:'', ref:'', branch:0, items:[], notes:'', photos:true,
            conditions: JSON.parse(JSON.stringify(st.conditions)),
            discounts: JSON.parse(JSON.stringify(st.discounts)), discountBase: st.discountBase,
            deposit: { ...st.deposit } };
@@ -225,6 +226,7 @@ if (!APP.budget) APP.budget = newBudget();
 let B = APP.budget;
 const fixStatus = b => (b.items || []).forEach(it => { if (/^stock$/i.test(String(it.status || '').trim())) it.status = 'En stock'; });
 fixStatus(B); (APP.history || []).forEach(h => fixStatus(h.budget));
+if (!String(B.num || '').trim() && !B.items.length) B.num = String(APP.settings.nextNum || 1700);
 if (!B.deposit.mode) B.deposit.mode = 'pct';
 let saveT;
 function saveNow(){
@@ -536,6 +538,9 @@ async function download(){
   try {
     const doc = await buildPDF();
     doc.save(fileName());
+    // el próximo presupuesto sugiere el número siguiente
+    const n = parseInt(String(B.num).replace(/\D/g, ''), 10);
+    if (!isNaN(n) && n >= (+APP.settings.nextNum || 0)) APP.settings.nextNum = n + 1;
     // guarda en recientes (sin fotos subidas, para no ocupar espacio)
     const snap = JSON.parse(JSON.stringify(B, (k, v) => typeof v === 'string' && v.startsWith('data:') ? '' : v));
     APP.history = [{ at:Date.now(), name:fileName().replace(/\.pdf$/, ''), budget:snap }, ...APP.history.filter(h => h.name !== fileName().replace(/\.pdf$/, ''))].slice(0, 20);
@@ -647,7 +652,8 @@ function secConditions(){
 function secSettings(){
   const st = APP.settings;
   return `<div class="sec"><details class="cfg"><summary>Configuración</summary>
-    <div style="margin-top:12px">${fText('Frase bajo el logo', 'S:tagline', st.tagline)}${fText('Web (pie de página)', 'S:web', st.web)}
+    <div style="margin-top:12px"><div class="f"><label>Próximo número de presupuesto</label><input type="number" step="1" min="1" data-path="S:nextNum" data-num value="${esc(st.nextNum || 1700)}"></div>
+    ${fText('Frase bajo el logo', 'S:tagline', st.tagline)}${fText('Web (pie de página)', 'S:web', st.web)}
     ${st.branches.map((b, i) => `<div class="branch"><div class="inline" style="justify-content:space-between"><strong style="font-weight:600">Sucursal ${i + 1}</strong>
         ${st.branches.length > 1 ? `<button class="tbtn danger" data-act="br-del" data-i="${i}">Quitar</button>` : ''}</div>
       <div class="row2">${fText('Nombre', `S:branches.${i}.name`, b.name)}${fText('Teléfono', `S:branches.${i}.phone`, b.phone)}</div>
