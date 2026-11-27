@@ -136,6 +136,11 @@
   .stagebar .hint{font-size:14px}
   .stage .btn{font-size:15px;min-height:44px;padding:11px 18px;border-radius:7px}
   .stage .btn.dark{font-size:16px;padding:12px 26px}
+  .saved-row{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 0;border-top:1px solid #E5DED2;flex-wrap:wrap}
+  .saved-row .sr-main{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .saved-row .sr-main b{font-weight:600;font-size:16px}
+  .saved-row .sr-main span{font-size:14px;color:var(--label)}
+  .side a.tbtn{text-decoration:none;color:var(--ink);display:inline-flex;align-items:center}
   .warn{background:#FBF1E6;border:1.5px solid #E2C9A8;color:#6B4A22;border-radius:8px;padding:12px 14px;font-size:15px;line-height:1.5;margin:0 24px 14px}
   .warn ul{margin:6px 0 10px 20px}
   .warn .inline{gap:10px}
@@ -207,7 +212,7 @@ const DEFAULT_SETTINGS = () => ({
 const today = () => { const d = new Date(); return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`; };
 function newBudget(){
   const st = APP.settings;
-  return { num:String(APP.settings.nextNum || 1700), date:today(), client:'', ref:'', branch:0, items:[], notes:'', photos:true,
+  return { serverId:null, autoNum:true, num:String(APP.settings.nextNum || 1700), date:today(), client:'', ref:'', branch:0, items:[], notes:'', photos:true,
            conditions: JSON.parse(JSON.stringify(st.conditions)),
            discounts: JSON.parse(JSON.stringify(st.discounts)), discountBase: st.discountBase,
            deposit: { ...st.deposit } };
@@ -259,7 +264,7 @@ function parseNum(s){
 }
 const money = n => '$ ' + (Math.round(n * 100) / 100).toLocaleString('es-AR', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 const isLocalFile = location.protocol === 'file:';
-const imgURL = raw => !raw || raw.startsWith('data:') || isLocalFile ? raw : '/api/img?url=' + encodeURIComponent(raw);
+const imgURL = raw => !raw || raw.startsWith('data:') || raw.startsWith('/api/') || isLocalFile ? raw : '/api/img?url=' + encodeURIComponent(raw);
 const photoSrc = it => it.photo ? (it.photo.upload || (it.photo.images || [])[it.photo.idx || 0] || '') : '';
 
 /* =========================================================
@@ -307,15 +312,52 @@ $('#file').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f || !uploadFor) return;
   const r = new FileReader();
   r.onload = () => { const i = new Image(); i.onload = () => {
-    const s = Math.min(1, 1200 / Math.max(i.naturalWidth, i.naturalHeight));
+    const s = Math.min(1, 1000 / Math.max(i.naturalWidth, i.naturalHeight));
     const c = document.createElement('canvas'); c.width = Math.round(i.naturalWidth * s); c.height = Math.round(i.naturalHeight * s);
     c.getContext('2d').drawImage(i, 0, 0, c.width, c.height);
     const it = B.items.find(x => x.id === uploadFor); if (!it) return;
-    it.photo = { ...(it.photo || {}), upload:c.toDataURL('image/jpeg', .88) };
+    it.photo = { ...(it.photo || {}), upload:c.toDataURL('image/jpeg', .85) };
     save(); renderForm(); refresh();
   }; i.src = r.result; };
   r.readAsDataURL(f);
 });
+
+/* =========================================================
+   Archivo central (servidor)
+   ========================================================= */
+let SERVER = isLocalFile ? 'off' : 'unknown';   // 'ok' | 'off' | 'error'
+let serverList = null, serverQuery = '', serverMsg = '';
+async function srv(action, body){
+  const opts = body ? { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) } : {};
+  const r = await fetch('/api/budgets?action=' + action + (body ? '' : ''), opts);
+  let j = null; try { j = await r.json(); } catch(_) {}
+  if (r.status === 503 && j && j.error === 'not_configured') { SERVER = 'off'; throw new Error(j.message); }
+  if (!r.ok) throw new Error((j && j.error) || 'No se pudo conectar con el archivo central.');
+  return j;
+}
+async function srvGet(q){ const r = await fetch('/api/budgets?' + new URLSearchParams(q)); let j = null; try { j = await r.json(); } catch(_) {}
+  if (r.status === 503 && j && j.error === 'not_configured') { SERVER = 'off'; throw new Error(j.message); }
+  if (!r.ok) throw new Error((j && j.error) || 'No se pudo conectar con el archivo central.'); return j; }
+async function serverInit(){
+  if (SERVER === 'off') return;
+  try {
+    const d = await srvGet({ action:'next' });
+    SERVER = 'ok';
+    if (!B.serverId && B.autoNum !== false) { B.num = String(d.next); save(); }
+    APP.settings.nextNum = d.next;
+    loadList();
+  } catch(_) { if (SERVER !== 'off') SERVER = 'error'; }
+  renderForm(); refresh();
+}
+async function loadList(){
+  try { serverList = (await srvGet({ action:'list' })).items; serverMsg = ''; }
+  catch(e) { serverMsg = e.message; }
+  const box = $('#savedList'); if (box) box.innerHTML = savedListHTML();
+}
+async function suggestNext(){
+  if (SERVER !== 'ok') return;
+  try { const d = await srvGet({ action:'next' }); if (!B.serverId && B.autoNum !== false) { B.num = String(d.next); save(); renderForm(); refresh(); } } catch(_) {}
+}
 
 /* =========================================================
    Cálculos
@@ -391,7 +433,7 @@ async function buildPDF(){
   font(SANS, 8.5, 'normal', C.muted);
   let y = 34.5;
   [br.address, [br.email, br.phone].filter(Boolean).join(' · ')].filter(Boolean).forEach(t => { doc.text(t, M, y); y += 4.4; });
-  font(SERIF, 22); doc.text('Presupuesto', W - M, 22, { align:'right' });
+  font(SERIF, 14); doc.text('Presupuesto', W - M, 21, { align:'right' });
   font(SANS, 9.5, 'bold'); if (B.num) doc.text(`N° ${B.num}`, W - M, 29, { align:'right' });
   font(SANS, 9, 'normal', C.muted); if (B.date) doc.text(`Fecha: ${B.date}`, W - M, 34.5, { align:'right' });
   doc.setDrawColor(...C.line); doc.setLineWidth(.3); doc.line(M, 45, W - M, 45);
@@ -533,11 +575,27 @@ function askDownload(){
   box.innerHTML = `<div class="warn"><b>Antes de descargar, revisá que falta completar:</b><ul>${m.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
     <div class="inline"><button class="btn ghost" data-act="warn-close">Volver a completar</button><button class="btn dark" data-act="force-dl">Descargar igual</button></div></div>`;
 }
+function status(text, kind){ const h = $('#pvHint'); h.textContent = text; h.style.color = kind === 'err' ? 'var(--err)' : kind === 'ok' ? 'var(--ok)' : ''; }
 async function download(){
   const btn = $('#dlBtn'); btn.disabled = true; btn.textContent = 'Generando…';
+  let warn = '';
   try {
+    // 1) Guarda los datos en el archivo central (asigna el número definitivo si es nuevo)
+    if (SERVER === 'ok') {
+      try {
+        const r = await srv('save', { id:B.serverId, autoNum:!B.serverId && B.autoNum !== false, total:calc().subtotal, budget:JSON.parse(JSON.stringify(B)) });
+        B.serverId = r.id; B.num = String(r.num); B.autoNum = false; B.items = r.budget.items; saveNow(); renderForm();
+      } catch(e) { warn = e.message; }
+    }
+    // 2) Arma y descarga el PDF
     const doc = await buildPDF();
     doc.save(fileName());
+    // 3) Guarda una copia del PDF
+    if (SERVER === 'ok' && B.serverId && !warn) {
+      btn.textContent = 'Guardando copia…';
+      try { await srv('pdf', { id:B.serverId, pdf:doc.output('datauristring').split(',')[1] }); } catch(e) { warn = e.message; }
+    }
+    if (SERVER === 'ok') { warn ? status('El PDF se descargó, pero no se pudo guardar en el archivo central: ' + warn, 'err') : status(`Presupuesto N° ${B.num} guardado en el archivo central.`, 'ok'); loadList(); }
     // el próximo presupuesto sugiere el número siguiente
     const n = parseInt(String(B.num).replace(/\D/g, ''), 10);
     if (!isNaN(n) && n >= (+APP.settings.nextNum || 0)) APP.settings.nextNum = n + 1;
@@ -557,7 +615,7 @@ const fArea = (label, path, val, rows = 2, ph = '') => `<div class="f"><label>${
 
 function secHeader(){
   const st = APP.settings;
-  return `<div class="saved">Todo se guarda automáticamente en esta computadora.</div><div class="sec"><h3><span class="step">1</span>Datos del presupuesto</h3>
+  return `${SERVER === 'ok' ? '' : '<div class="saved">Todo se guarda automáticamente en esta computadora.</div>'}<div class="sec"><h3><span class="step">1</span>Datos del presupuesto</h3>
     <div class="row2">${fText('N°', 'num', B.num)}${fText('Fecha', 'date', B.date)}</div>
     ${fText('Cliente', 'client', B.client)}
     <div class="f"><label>Sucursal</label><select data-path="branch" data-num>${st.branches.map((b, i) =>
@@ -649,10 +707,30 @@ function secConditions(){
     <div class="msg" id="condMsg"></div>
     <div style="margin-top:14px">${fArea('Observaciones (opcional)', 'notes', B.notes, 2, 'Se imprimen antes de las condiciones')}</div></div>`;
 }
+function savedListHTML(){
+  if (serverMsg) return `<p class="msg err">${esc(serverMsg)}</p>`;
+  if (!serverList) return '<p class="help">Cargando…</p>';
+  const q = norm(serverQuery);
+  const list = serverList.filter(x => !q || norm(`${x.num} ${x.client} ${x.date}`).includes(q));
+  const show = list.slice(0, q ? 40 : 6);
+  if (!show.length) return `<p class="help">${q ? 'No hay presupuestos que coincidan con la búsqueda.' : 'Todavía no hay presupuestos guardados. Se guardan al descargar el PDF.'}</p>`;
+  return show.map(x => `<div class="saved-row">
+      <div class="sr-main"><b>N° ${esc(x.num)} · ${esc(x.client || 'Sin cliente')}</b><span>${esc(x.date || '')}${x.total ? ' · ' + money(x.total) : ''}${x.items ? ` · ${x.items} producto${x.items > 1 ? 's' : ''}` : ''}</span></div>
+      <div class="acts">${x.hasPdf ? `<a class="tbtn" href="/api/budgets?action=pdf&id=${encodeURIComponent(x.id)}">Bajar PDF</a>` : ''}
+        <button class="tbtn" data-act="srv-open" data-id="${esc(x.id)}">Abrir</button>
+        <button class="tbtn" data-act="srv-copy" data-id="${esc(x.id)}">Usar como base</button></div></div>`).join('')
+    + (list.length > show.length ? `<p class="help" style="margin-top:8px">Se muestran ${show.length} de ${list.length}. Escribí para buscar.</p>` : '');
+}
+function secSaved(){
+  if (SERVER !== 'ok') return '';
+  return `<div class="sec"><h3>Presupuestos guardados ${serverList ? `<span class="count">${serverList.length}</span>` : ''}</h3>
+    <div class="f"><input type="text" id="savedQ" value="${esc(serverQuery)}" placeholder="Buscar por cliente o número"></div>
+    <div id="savedList">${savedListHTML()}</div></div>`;
+}
 function secSettings(){
   const st = APP.settings;
   return `<div class="sec"><details class="cfg"><summary>Configuración</summary>
-    <div style="margin-top:12px"><div class="f"><label>Próximo número de presupuesto</label><input type="number" step="1" min="1" data-path="S:nextNum" data-num value="${esc(st.nextNum || 1700)}"></div>
+    <div style="margin-top:12px"><div class="f"><label>Próximo número de presupuesto</label><input type="number" step="1" min="1" id="nextNumIn" data-path="S:nextNum" data-num value="${esc(st.nextNum || 1700)}"></div>
     ${fText('Frase bajo el logo', 'S:tagline', st.tagline)}${fText('Web (pie de página)', 'S:web', st.web)}
     ${st.branches.map((b, i) => `<div class="branch"><div class="inline" style="justify-content:space-between"><strong style="font-weight:600">Sucursal ${i + 1}</strong>
         ${st.branches.length > 1 ? `<button class="tbtn danger" data-act="br-del" data-i="${i}">Quitar</button>` : ''}</div>
@@ -661,15 +739,15 @@ function secSettings(){
     <button class="btn ghost sm" data-act="br-add" style="margin-top:8px">+ Sucursal</button>
     <p class="help" style="margin-top:10px">Estos datos se guardan para todos los presupuestos de este navegador.</p></div>
   </details></div>
-  ${APP.history.length ? `<div class="sec"><h3>Presupuestos descargados</h3>${APP.history.map((h, i) => `<div class="hist">
+  ${SERVER !== 'ok' && APP.history.length ? `<div class="sec"><h3>Presupuestos descargados</h3>${APP.history.map((h, i) => `<div class="hist">
       <div>${esc(h.name)}<br><span>${new Date(h.at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' })}</span></div>
       <button class="btn ghost sm" data-act="open-hist" data-i="${i}">Abrir</button></div>`).join('')}</div>` : ''}`;
 }
 function renderForm(){
   const side = $('#side'), y = side.scrollTop;
   const focus = document.activeElement && document.activeElement.id;
-  side.innerHTML = secHeader() + secItems() + secTotals() + secConditions() + secSettings()
-    + `<div class="sec"><h3>¿Terminaste?</h3><p class="help" style="margin-bottom:12px">Para armar otro presupuesto desde cero. El actual queda en “Presupuestos descargados” si ya lo descargaste.</p>
+  side.innerHTML = secSaved() + secHeader() + secItems() + secTotals() + secConditions() + secSettings()
+    + `<div class="sec"><h3>¿Terminaste?</h3><p class="help" style="margin-bottom:12px">Para armar otro presupuesto desde cero. ${SERVER === 'ok' ? 'El actual queda en “Presupuestos guardados” si ya lo descargaste.' : 'El actual queda en “Presupuestos descargados” si ya lo descargaste.'}</p>
        <button class="btn ghost" data-act="new">Empezar un presupuesto nuevo</button></div>`;
   side.scrollTop = y;
   if (focus && $('#' + CSS.escape(focus))) $('#' + CSS.escape(focus)).focus();
@@ -684,12 +762,21 @@ document.addEventListener('input', e => {
   if ('num' in el.dataset) v = parseNum(v);
   if ('money' in el.dataset) v = parseNum(v);
   if (p.startsWith('S:')) setPath(APP.settings, p.slice(2), v); else setPath(B, p, v);
+  if (p === 'num') B.autoNum = false;
   if ('rerender' in el.dataset) renderForm(); else updateLive();
   save(); refresh();
 });
 document.addEventListener('change', e => {
   const el = e.target; if (!el.dataset || !el.dataset.path) return;
   if (el.tagName === 'SELECT' || el.dataset.path.startsWith('S:branches')) renderForm();
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'savedQ') { serverQuery = e.target.value; const box = $('#savedList'); if (box) box.innerHTML = savedListHTML(); }
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'nextNumIn' && SERVER === 'ok') {
+    srv('setnext', { next:parseInt(e.target.value, 10) }).then(() => suggestNext()).catch(err => alert(err.message));
+  }
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id && e.target.id.startsWith('q-')) { e.preventDefault(); runSearch(e.target.id.slice(2), e.target.value.trim()); }
@@ -701,7 +788,19 @@ document.addEventListener('click', e => {
   switch (a) {
     case 'new':
       if (B.items.length && !confirm('¿Empezar un presupuesto nuevo? El actual se borra (si lo descargaste, queda en “Descargados recientemente”).')) break;
-      APP.budget = B = newBudget(); for (const k in openSearch) delete openSearch[k]; rr(); window.scrollTo(0, 0); $('#side').scrollTop = 0; break;
+      APP.budget = B = newBudget(); for (const k in openSearch) delete openSearch[k]; rr(); window.scrollTo(0, 0); $('#side').scrollTop = 0; suggestNext(); break;
+    case 'srv-open': case 'srv-copy': {
+      if (B.items.length && !confirm(a === 'srv-open' ? '¿Abrir este presupuesto? Se reemplaza el que estás editando.' : '¿Usar este presupuesto como base de uno nuevo? Se reemplaza el que estás editando.')) break;
+      srvGet({ action:'get', id:b.dataset.id }).then(d => {
+        const nb = { ...newBudget(), ...d.budget };
+        if (a === 'srv-open') { nb.serverId = d.id; nb.num = String(d.num); nb.autoNum = false; }
+        else { nb.serverId = null; nb.autoNum = true; nb.date = today(); }
+        APP.budget = B = nb; for (const k in openSearch) delete openSearch[k];
+        rr(); $('#side').scrollTop = 0;
+        if (a === 'srv-copy') suggestNext();
+        status(a === 'srv-open' ? `Abriste el presupuesto N° ${B.num}. Si lo cambiás y lo volvés a descargar, se actualiza.` : 'Presupuesto nuevo armado a partir de uno guardado.', 'ok');
+      }).catch(err => alert(err.message));
+      break; }
     case 'download': askDownload(); break;
     case 'force-dl': $('#warnBox').innerHTML = ''; download(); break;
     case 'warn-close': $('#warnBox').innerHTML = ''; break;
@@ -758,6 +857,7 @@ document.addEventListener('click', e => {
 
 renderForm();
 renderPreview();
+serverInit();
 </script>
 </body>
 </html>
