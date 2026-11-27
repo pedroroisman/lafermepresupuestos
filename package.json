@@ -3,6 +3,7 @@
   "private": true,
   "description": "Estudio de historias de La Ferme",
   "dependencies": {
-    "@vercel/functions": "^3.9.11"
+    "@vercel/functions": "^3.9.11",
+    "@vercel/blob": "^2.9.0"
   }
 }
